@@ -12,9 +12,20 @@
   body{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
     font-family:"Courier New",monospace;color:#dfefff}
   .stage{position:relative;width:100%;padding:6px 6px 0;display:flex;justify-content:center}
-  canvas{display:block;max-width:100%;background:#000;
-    border:1px solid #1d2b3a;border-radius:6px;touch-action:none;
-    box-shadow:0 0 30px rgba(120,190,255,.10), inset 0 0 60px rgba(0,0,0,.8)}
+  /* CRT screen: beam layer + crisp HUD layer + scanline/vignette glass */
+  .screen{position:relative;border:1px solid #1d2b3a;border-radius:8px;overflow:hidden;
+    background:#000;touch-action:none;
+    box-shadow:0 0 34px rgba(120,190,255,.13), 0 0 90px rgba(80,150,255,.07)}
+  .screen canvas{display:block;max-width:100%;background:transparent}
+  #hud{position:absolute;left:0;top:0;pointer-events:none}
+  .glass{position:absolute;inset:0;pointer-events:none;border-radius:8px;
+    background:
+      repeating-linear-gradient(180deg,
+        rgba(0,0,0,0) 0px, rgba(0,0,0,0) 2px,
+        rgba(0,0,0,.11) 2px, rgba(0,0,0,.11) 3px),
+      radial-gradient(ellipse at center,
+        rgba(0,0,0,0) 62%, rgba(0,0,0,.14) 87%, rgba(0,0,0,.34) 100%);
+    mix-blend-mode:multiply}
   /* touch controls */
   .pad{width:100%;max-width:860px;display:none;gap:8px;padding:8px 6px 12px}
   .pad .side{display:flex;gap:8px;flex:1}
@@ -30,7 +41,13 @@
 </style>
 </head>
 <body>
-  <div class="stage"><canvas id="game" width="800" height="600"></canvas></div>
+  <div class="stage">
+    <div class="screen" id="screen">
+      <canvas id="game" width="800" height="600"></canvas>
+      <canvas id="hud" width="800" height="600"></canvas>
+      <div class="glass"></div>
+    </div>
+  </div>
 
   <div class="pad" id="pad">
     <div class="side">
@@ -57,18 +74,30 @@
 const PORTRAIT = innerHeight > innerWidth*1.15;
 const W = PORTRAIT ? 600 : 800;
 const H = PORTRAIT ? 850 : 600;
-const cv=document.getElementById('game'), ctx=cv.getContext('2d');
-cv.width=W; cv.height=H;
+// Three layers: an offscreen "beam" scene, the persistence canvas it fades into,
+// and a crisp HUD overlay that never smears.
+const cv=document.getElementById('game');          // persistence layer (visible)
+const beam=cv.getContext('2d');
+const hudCv=document.getElementById('hud');        // crisp overlay (visible)
+const hctx=hudCv.getContext('2d');
+const sceneCv=document.createElement('canvas');    // this frame's vectors only
+const sctx=sceneCv.getContext('2d');
+let ctx=sctx;                                      // current draw target
+cv.width=hudCv.width=sceneCv.width=W;
+cv.height=hudCv.height=sceneCv.height=H;
 
-// Size the canvas to fill the available space (minus the touch pad) without distortion.
+// Size the canvases to fill the available space (minus the touch pad) without distortion.
 function layout(){
   const pad=document.getElementById('pad');
   const padH=(pad && getComputedStyle(pad).display!=='none') ? pad.offsetHeight : 0;
   const availW=Math.min(innerWidth-14, 900);
   const availH=innerHeight-padH-26;
   const s=Math.max(0.1, Math.min(availW/W, availH/H));
-  cv.style.width=Math.floor(W*s)+'px';
-  cv.style.height=Math.floor(H*s)+'px';
+  const w=Math.floor(W*s)+'px', h=Math.floor(H*s)+'px';
+  cv.style.width=w; cv.style.height=h;
+  hudCv.style.width=w; hudCv.style.height=h;
+  const scr=document.getElementById('screen');
+  if(scr){ scr.style.width=w; scr.style.height=h; }
 }
 addEventListener('resize',layout);
 addEventListener('orientationchange',()=>setTimeout(layout,120));
@@ -215,7 +244,7 @@ const G={
   state:'attract',      // attract | playing | dying | over
   ship:null, bullets:[], rocks:[], ufo:null, ufoBullets:[], debris:[],
   score:0, lives:3, level:0, best:0,
-  t:0, dyingT:0, overT:0, spawnSafeT:0,
+  t:0, dyingT:0, overT:0, spawnSafeT:0, shake:0, flash:0,
   ufoTimer:0, beatT:0, beatHi:false, beatInt:52, nextExtra:10000,
   paused:false
 };
@@ -227,6 +256,7 @@ function newShip(){
 function startGame(){
   G.score=0; G.lives=3; G.level=0; G.nextExtra=10000;
   G.bullets=[]; G.ufoBullets=[]; G.debris=[]; G.ufo=null; G.rocks=[];
+  G.shake=0; G.flash=0;
   G.ship=newShip(); G.state='playing';
   nextLevel();
 }
@@ -275,6 +305,7 @@ function splitRock(a){
   const val={3:20,2:50,1:100}[a.size];
   addScore(val);
   Sound.play(a.size===3?'bangBig':a.size===2?'bangMed':'bangSmall');
+  G.shake=Math.max(G.shake, a.size===3?5.5:a.size===2?3:1.4);
   shatter(a.x,a.y, a.size===3?14:a.size===2?10:7, a.size===3?2.2:1.8, 42);
   const i=G.rocks.indexOf(a); if(i>=0) G.rocks.splice(i,1);
   if(a.size>1){
@@ -290,6 +321,7 @@ function killShip(){
   if(!G.ship) return;
   shipShards(G.ship);
   shatter(G.ship.x,G.ship.y,10,1.6,50);
+  G.shake=15; G.flash=0.85;
   Sound.play('shipDie'); Sound.thrustOff();
   G.ship=null; G.lives--; G.state='dying'; G.dyingT=110; G.bullets=[];
 }
@@ -370,7 +402,8 @@ function update(){
       for(const a of G.rocks){ if(hit(b,a)){ b.dead=true; splitRock(a); break; } }
       if(!b.dead && G.ufo && hit(b,G.ufo)){
         b.dead=true; addScore(G.ufo.small?1000:200);
-        shatter(G.ufo.x,G.ufo.y,16,2.4,48); Sound.play('bangMed'); G.ufo=null;
+        shatter(G.ufo.x,G.ufo.y,16,2.4,48); Sound.play('bangMed');
+        G.shake=Math.max(G.shake,7); G.flash=0.3; G.ufo=null;
       }
     }
     G.bullets=G.bullets.filter(b=>!b.dead);
@@ -445,11 +478,13 @@ function hyperspace(){
 function vline(pts,x,y,ang,scale){ strokePoly(pts,x,y,ang,scale); }
 
 function draw(){
-  ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+  // ---- layer 1: this frame's vectors, on transparent ----
+  ctx=sctx;
+  ctx.clearRect(0,0,W,H);
   ctx.lineCap='round'; ctx.lineJoin='round';
   ctx.strokeStyle='#fff'; ctx.fillStyle='#fff';
-  ctx.shadowColor='rgba(150,210,255,.85)'; ctx.shadowBlur=8;
-  ctx.lineWidth=1.7;
+  ctx.shadowColor='rgba(150,210,255,.9)'; ctx.shadowBlur=9;
+  ctx.lineWidth=1.95;
 
   // rocks
   for(const a of G.rocks) strokePoly(asteroidPts(a), a.x, a.y, a.ang, 1);
@@ -498,7 +533,31 @@ function draw(){
     if(sh.thrusting && Math.floor(G.t/2)%2===0) strokePoly(FLAME,sh.x,sh.y,sh.ang,1);
   }
   if(sh && sh.hyperCool>0) sh.hyperCool--;
+  ctx.shadowBlur=0;
 
+  // ---- layer 2: phosphor persistence + shake + flash ----
+  let dx=0, dy=0;
+  if(G.shake>0){
+    dx=rnd(-G.shake,G.shake); dy=rnd(-G.shake,G.shake);
+    G.shake*=0.87; if(G.shake<0.25) G.shake=0;
+  }
+  beam.globalCompositeOperation='source-over';
+  beam.fillStyle='rgba(0,0,0,0.33)';       // old frames decay like a vector CRT
+  beam.fillRect(0,0,W,H);
+  beam.drawImage(sceneCv, dx, dy);
+  if(G.flash>0){
+    beam.fillStyle='rgba(232,244,255,'+(G.flash*0.5).toFixed(3)+')';
+    beam.fillRect(0,0,W,H);
+    G.flash*=0.80; if(G.flash<0.02) G.flash=0;
+  }
+
+  // ---- layer 3: crisp HUD (never smears) ----
+  ctx=hctx;
+  ctx.clearRect(0,0,W,H);
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  ctx.strokeStyle='#fff'; ctx.fillStyle='#fff';
+  ctx.shadowColor='rgba(150,210,255,.85)'; ctx.shadowBlur=7;
+  ctx.lineWidth=1.7;
   drawHUD();
   ctx.shadowBlur=0;
 }
@@ -585,7 +644,7 @@ bindHold('b-right', ()=>input.right=true, ()=>input.right=false);
 bindHold('b-thrust',()=>input.thrust=true,()=>input.thrust=false);
 bindHold('b-fire',  ()=>{ if(!startOrRestart()) fire(); });
 bindHold('b-hyper', ()=>{ if(!startOrRestart()) hyperspace(); });
-cv.addEventListener('pointerdown',e=>{ e.preventDefault(); startOrRestart(); });
+document.getElementById('screen').addEventListener('pointerdown',e=>{ e.preventDefault(); startOrRestart(); });
 
 /* ---------------- loop (fixed 60Hz step) ---------------- */
 let acc=0, last=0;

@@ -56,6 +56,9 @@ An extra ship every **10,000** points. Your high score is saved locally.
 - Only **4 of your shots** can be in flight at once, as in the arcade
 - The iconic **two-note heartbeat** that speeds up as the field empties
 - Your ship breaks apart into its own line segments when destroyed
+- A **vector-monitor CRT look**: phosphor persistence (bright lines leave a
+  decaying trail), beam bloom, scanlines and a soft vignette
+- **Screen shake** on impacts and a white **flash** when your ship is destroyed
 
 ## How it works
 
