@@ -245,10 +245,47 @@ const G={
   ship:null, bullets:[], rocks:[], ufo:null, ufoBullets:[], debris:[],
   score:0, lives:3, level:0, best:0,
   t:0, dyingT:0, overT:0, spawnSafeT:0, shake:0, flash:0,
+  entry:null, tableT:0, newRow:-1,
   ufoTimer:0, beatT:0, beatHi:false, beatInt:52, nextExtra:10000,
   paused:false
 };
 try{ G.best=parseInt(localStorage.getItem('asteroids-best')||'0',10)||0; }catch(e){}
+
+/* ---------------- high score table (top ten, saved in the browser) ---------------- */
+const HS_KEY='asteroids-scores';
+const LETTERS='ABCDEFGHIJKLMNOPQRSTUVWXYZ .-';
+let hiscores=[];
+function loadScores(){
+  try{
+    const raw=JSON.parse(localStorage.getItem(HS_KEY));
+    hiscores=Array.isArray(raw)?raw.filter(e=>e&&typeof e.s==='number'&&typeof e.i==='string'):[];
+  }catch(e){ hiscores=[]; }
+  hiscores.sort((a,b)=>b.s-a.s); hiscores=hiscores.slice(0,10);
+  if(hiscores.length && hiscores[0].s>G.best) G.best=hiscores[0].s;
+}
+function saveScores(){ try{ localStorage.setItem(HS_KEY, JSON.stringify(hiscores)); }catch(e){} }
+function qualifies(sc){ return sc>0 && (hiscores.length<10 || sc>hiscores[hiscores.length-1].s); }
+loadScores();
+
+function beginEntry(score){
+  G.state='entry';
+  G.entry={ chars:[0,0,0], pos:0, blink:0, repeat:0, held:false, score };
+}
+function entryConfirm(){
+  const e=G.entry; if(!e) return;
+  if(e.pos<2){ e.pos++; }
+  else{
+    const initials=e.chars.map(c=>LETTERS[c]).join('');
+    hiscores.push({ i:initials, s:e.score });
+    hiscores.sort((a,b)=>b.s-a.s);
+    hiscores=hiscores.slice(0,10);
+    saveScores();
+    if(e.score>G.best){ G.best=e.score; try{ localStorage.setItem('asteroids-best',String(G.best)); }catch(e2){} }
+    G.newRow=hiscores.findIndex(r=>r.i===initials && r.s===e.score);
+    G.entry=null; G.state='table'; G.tableT=0;
+    Sound.play('extra');
+  }
+}
 
 function newShip(){
   return { x:W/2, y:H/2, vx:0, vy:0, ang:0, r:11, thrusting:false, inv:110 };
@@ -453,7 +490,24 @@ function update(){
       else { G.state='over'; G.overT=0; Sound.thrustOff(); }
     }
   }
-  if(G.state==='over') G.overT++;
+  if(G.state==='over'){
+    G.overT++;
+    // a qualifying score earns the arcade initials ritual
+    if(G.overT===60 && qualifies(G.score)) beginEntry(G.score);
+  }
+
+  if(G.state==='entry'){
+    const e=G.entry; e.blink++;
+    if(input.left||input.right){
+      if(e.repeat<=0){
+        const d=input.right?1:-1;
+        e.chars[e.pos]=(e.chars[e.pos]+d+LETTERS.length)%LETTERS.length;
+        e.repeat=e.held?6:20; e.held=true;   // tap steps one, hold scrolls
+      } else e.repeat--;
+    } else { e.repeat=0; e.held=false; }
+  }
+
+  if(G.state==='table') G.tableT++;
 }
 
 function fire(){
@@ -562,6 +616,17 @@ function draw(){
   ctx.shadowBlur=0;
 }
 
+// rank / score / initials, monospaced so the columns line up
+function drawScores(cx, y, limit, highlight){
+  ctx.font='600 17px "Courier New",monospace'; ctx.textAlign='center';
+  hiscores.slice(0,limit).forEach((e,i)=>{
+    const row=String(i+1).padStart(2,' ')+'   '+String(e.s).padStart(6,' ')+'   '+e.i;
+    if(i===highlight){ ctx.globalAlpha=0.45+0.55*Math.abs(Math.sin(G.t*0.09)); }
+    ctx.fillText(row, cx, y+i*23);
+    ctx.globalAlpha=1;
+  });
+}
+
 function drawHUD(){
   ctx.save();
   ctx.font='700 26px "Courier New",monospace'; ctx.textAlign='left';
@@ -573,15 +638,55 @@ function drawHUD(){
   ctx.textAlign='center';
 
   if(G.state==='attract'){
-    ctx.font='700 58px "Courier New",monospace';
-    ctx.fillText('ASTEROIDS', W/2, H/2-18);
+    ctx.font='700 '+Math.round(Math.min(58,W*0.093))+'px "Courier New",monospace';
+    ctx.fillText('ASTEROIDS', W/2, H/2-86);
     ctx.font='600 17px "Courier New",monospace';
     ctx.globalAlpha=0.55+0.45*Math.sin(G.t*0.07);
-    ctx.fillText(hasTouch?'TAP TO START':'PRESS  SPACE  TO  START', W/2, H/2+34);
+    ctx.fillText(hasTouch?'TAP TO START':'PRESS  SPACE  TO  START', W/2, H/2-40);
     ctx.globalAlpha=1;
-    ctx.font='600 13px "Courier New",monospace'; ctx.globalAlpha=0.5;
-    ctx.fillText('20  50  100   POINTS   ·   SAUCERS  200 / 1000', W/2, H/2+78);
+    if(hiscores.length){
+      ctx.font='600 13px "Courier New",monospace'; ctx.globalAlpha=0.6;
+      ctx.fillText('HIGH SCORES', W/2, H/2+4); ctx.globalAlpha=1;
+      drawScores(W/2, H/2+30, 5, -1);
+    }
+    ctx.font='600 12px "Courier New",monospace'; ctx.globalAlpha=0.45;
+    ctx.fillText('20  50  100   POINTS   ·   SAUCERS  200 / 1000', W/2, H/2+150);
     ctx.globalAlpha=1;
+  }
+
+  if(G.state==='entry'){
+    const e=G.entry;
+    ctx.font='600 15px "Courier New",monospace';
+    ctx.fillText('YOUR SCORE IS ONE OF THE TEN BEST', W/2, H/2-96);
+    ctx.fillText('PLEASE ENTER YOUR INITIALS', W/2, H/2-70);
+    // three big slots; the active one blinks with an underline
+    ctx.font='700 46px "Courier New",monospace';
+    const gap=54, x0=W/2-gap;
+    for(let i=0;i<3;i++){
+      const x=x0+i*gap, active=(i===e.pos);
+      if(active && Math.floor(e.blink/16)%2===0) ctx.globalAlpha=0.28;
+      ctx.fillText(LETTERS[e.chars[i]], x, H/2+6);
+      ctx.globalAlpha=1;
+      if(active){
+        ctx.beginPath(); ctx.moveTo(x-18,H/2+18); ctx.lineTo(x+18,H/2+18); ctx.stroke();
+      }
+    }
+    ctx.font='600 12px "Courier New",monospace'; ctx.globalAlpha=0.65;
+    ctx.fillText(hasTouch?'ROTATE BUTTONS SELECT LETTER':'PUSH  ←  →  TO SELECT LETTER', W/2, H/2+62);
+    ctx.fillText(hasTouch?'FIRE WHEN LETTER IS CORRECT':'PUSH  SPACE  WHEN LETTER IS CORRECT', W/2, H/2+84);
+    ctx.globalAlpha=1;
+  }
+
+  if(G.state==='table'){
+    ctx.font='700 28px "Courier New",monospace';
+    ctx.fillText('HIGH SCORES', W/2, H/2-132);
+    drawScores(W/2, H/2-92, 10, G.newRow);
+    if(G.tableT>60){
+      ctx.font='600 14px "Courier New",monospace';
+      ctx.globalAlpha=0.55+0.45*Math.sin(G.t*0.07);
+      ctx.fillText(hasTouch?'TAP TO CONTINUE':'PRESS  SPACE  TO  CONTINUE', W/2, H/2+168);
+      ctx.globalAlpha=1;
+    }
   }
   if(G.state==='over'){
     ctx.font='700 44px "Courier New",monospace';
@@ -607,10 +712,19 @@ const hasTouch = matchMedia('(pointer:coarse)').matches;
 function startOrRestart(){
   Sound.ensure();
   if(G.state==='attract'||G.state==='over'){
-    if(G.state==='over' && G.overT<70) return;
+    if(G.state==='over' && G.overT<70) return false;
     G.debris=[]; startGame(); return true;
   }
   return false;
+}
+function toAttract(){ G.state='attract'; G.newRow=-1; }
+// the primary button (space / FIRE / tap): confirms a letter, dismisses the
+// table, or starts a game — returns true when it consumed the press
+function primary(){
+  Sound.ensure();
+  if(G.state==='entry'){ entryConfirm(); return true; }
+  if(G.state==='table'){ if(G.tableT>60) toAttract(); return true; }
+  return startOrRestart();
 }
 
 addEventListener('keydown',e=>{
@@ -618,8 +732,9 @@ addEventListener('keydown',e=>{
   if(k==='ArrowLeft'||k==='a'||k==='A') input.left=true;
   else if(k==='ArrowRight'||k==='d'||k==='D') input.right=true;
   else if(k==='ArrowUp'||k==='w'||k==='W'){ input.thrust=true; Sound.ensure(); }
-  else if(k===' '){ if(!startOrRestart()) fire(); }
-  else if(k==='Shift'||k==='h'||k==='H') hyperspace();
+  else if(k===' '){ if(!primary()) fire(); }
+  else if(k==='Enter'){ primary(); }
+  else if(k==='Shift'||k==='h'||k==='H'){ if(G.state==='entry') entryConfirm(); else hyperspace(); }
   else if(k==='p'||k==='P'){ G.paused=!G.paused; if(G.paused) Sound.thrustOff(); }
   if([' ','ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(k)) e.preventDefault();
 });
@@ -642,9 +757,9 @@ function bindHold(id,on,off){
 bindHold('b-left',  ()=>input.left=true,  ()=>input.left=false);
 bindHold('b-right', ()=>input.right=true, ()=>input.right=false);
 bindHold('b-thrust',()=>input.thrust=true,()=>input.thrust=false);
-bindHold('b-fire',  ()=>{ if(!startOrRestart()) fire(); });
-bindHold('b-hyper', ()=>{ if(!startOrRestart()) hyperspace(); });
-document.getElementById('screen').addEventListener('pointerdown',e=>{ e.preventDefault(); startOrRestart(); });
+bindHold('b-fire',  ()=>{ if(!primary()) fire(); });
+bindHold('b-hyper', ()=>{ if(G.state==='entry') entryConfirm(); else if(!primary()) hyperspace(); });
+document.getElementById('screen').addEventListener('pointerdown',e=>{ e.preventDefault(); primary(); });
 
 /* ---------------- loop (fixed 60Hz step) ---------------- */
 let acc=0, last=0;

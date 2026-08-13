@@ -42,7 +42,14 @@ screen, and on-screen thumb controls appear automatically.
 | Large saucer | 200 |
 | Small saucer | 1000 |
 
-An extra ship every **10,000** points. Your high score is saved locally.
+An extra ship every **10,000** points.
+
+### High scores
+
+Beat the tenth-place score and you get the arcade ritual: *"YOUR SCORE IS ONE OF
+THE TEN BEST — PLEASE ENTER YOUR INITIALS."* Rotate to pick each letter, fire to
+lock it in. The **top ten table is saved in your browser** and shown on the
+attract screen, so it's still there next time you play.
 
 ## Faithful details
 
