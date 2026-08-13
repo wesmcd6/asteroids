@@ -7,7 +7,11 @@
 <style>
   :root{ --glow:#cfe9ff; }
   *{box-sizing:border-box}
+  /* touch-action:manipulation kills the double-tap-to-zoom gesture (iOS Safari
+     ignores user-scalable=no, so this + the JS guards below are what actually work) */
   html,body{margin:0;height:100%;background:#000;overflow:hidden;
+    touch-action:manipulation;overscroll-behavior:none;
+    -webkit-text-size-adjust:100%;-webkit-touch-callout:none;
     -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent}
   body{display:flex;flex-direction:column;align-items:center;justify-content:flex-start;
     font-family:"Courier New",monospace;color:#dfefff}
@@ -27,8 +31,8 @@
         rgba(0,0,0,0) 62%, rgba(0,0,0,.14) 87%, rgba(0,0,0,.34) 100%);
     mix-blend-mode:multiply}
   /* touch controls */
-  .pad{width:100%;max-width:860px;display:none;gap:8px;padding:8px 6px 12px}
-  .pad .side{display:flex;gap:8px;flex:1}
+  .pad{width:100%;max-width:860px;display:none;gap:8px;padding:8px 6px 12px;touch-action:none}
+  .pad .side{display:flex;gap:8px;flex:1;touch-action:none}
   .btn{flex:1;min-height:64px;background:#0a1420;border:1px solid #2b4761;border-radius:12px;
     color:#bfe2ff;font:600 13px/1 "Courier New",monospace;letter-spacing:1px;
     display:flex;align-items:center;justify-content:center;touch-action:none;
@@ -745,6 +749,19 @@ addEventListener('keyup',e=>{
   else if(k==='ArrowUp'||k==='w'||k==='W') input.thrust=false;
 });
 
+/* Stop mobile browsers zooming on rapid taps. iOS Safari ignores
+   user-scalable=no, so we suppress the synthetic double-tap and pinch
+   gestures explicitly. */
+let lastTouchEnd=0;
+document.addEventListener('touchend',e=>{
+  const now=Date.now();
+  if(now-lastTouchEnd<=350) e.preventDefault();   // second tap of a double-tap
+  lastTouchEnd=now;
+},{passive:false});
+document.addEventListener('dblclick',e=>e.preventDefault(),{passive:false});
+['gesturestart','gesturechange','gestureend'].forEach(ev=>
+  document.addEventListener(ev,e=>e.preventDefault(),{passive:false}));
+
 function bindHold(id,on,off){
   const el=document.getElementById(id); if(!el) return;
   const down=e=>{ e.preventDefault(); Sound.ensure(); el.classList.add('on'); on(); };
@@ -753,13 +770,19 @@ function bindHold(id,on,off){
   el.addEventListener('pointerup',up);
   el.addEventListener('pointercancel',up);
   el.addEventListener('pointerleave',up);
+  // belt and braces on iOS: also swallow the raw touch events on the button
+  el.addEventListener('touchstart',e=>e.preventDefault(),{passive:false});
+  el.addEventListener('touchend',e=>e.preventDefault(),{passive:false});
 }
 bindHold('b-left',  ()=>input.left=true,  ()=>input.left=false);
 bindHold('b-right', ()=>input.right=true, ()=>input.right=false);
 bindHold('b-thrust',()=>input.thrust=true,()=>input.thrust=false);
 bindHold('b-fire',  ()=>{ if(!primary()) fire(); });
 bindHold('b-hyper', ()=>{ if(G.state==='entry') entryConfirm(); else if(!primary()) hyperspace(); });
-document.getElementById('screen').addEventListener('pointerdown',e=>{ e.preventDefault(); primary(); });
+const screenEl=document.getElementById('screen');
+screenEl.addEventListener('pointerdown',e=>{ e.preventDefault(); primary(); });
+screenEl.addEventListener('touchstart',e=>e.preventDefault(),{passive:false});
+screenEl.addEventListener('touchend',e=>e.preventDefault(),{passive:false});
 
 /* ---------------- loop (fixed 60Hz step) ---------------- */
 let acc=0, last=0;
